@@ -8,4 +8,9 @@ Rake::TestTask.new(:test) do |t|
   t.warning = true
 end
 
+desc "Compare rdeflate with Zlib on a few corpora (prints a Markdown table)"
+task :bench do
+  ruby "-Ilib", "benchmarks/bench.rb"
+end
+
 task default: :test
