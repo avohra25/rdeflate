@@ -9,6 +9,7 @@ require_relative "rdeflate/bit_reader"
 require_relative "rdeflate/bit_writer"
 require_relative "rdeflate/inflater"
 require_relative "rdeflate/block_encoder"
+require_relative "rdeflate/lz77"
 require_relative "rdeflate/deflater"
 
 # Pure-Ruby DEFLATE (RFC 1951) with zlib (RFC 1950) and gzip (RFC 1952)
