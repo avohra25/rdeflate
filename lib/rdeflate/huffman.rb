@@ -1,7 +1,8 @@
 # frozen_string_literal: true
 
 module Rdeflate
-  # Canonical Huffman codes and table-driven decoding.
+  # Canonical Huffman codes: decoding tables and (length-limited) code
+  # construction.
   module Huffman
     MAX_BITS = 15
 
@@ -36,6 +37,92 @@ module Rdeflate
         next_code[len] += 1
         c
       end
+    end
+
+    # Bit-reversed canonical codes, ready for BitWriter#write_bits.
+    def encoder_codes(lengths)
+      canonical_codes(lengths).each_with_index.map { |code, sym| reverse(code, lengths[sym]) }
+    end
+
+    # Optimal prefix code lengths for +freqs+, limited to +max_bits+.
+    #
+    # Builds an ordinary Huffman tree with the two-queue method, then, if the
+    # tree is too deep, redistributes the per-length counts so the Kraft sum
+    # is exactly one again (the same repair zlib/miniz use), and finally
+    # hands the shortest lengths to the most frequent symbols. The result is
+    # always a complete code with at least two symbols, which every inflater
+    # accepts.
+    def lengths_from_frequencies(freqs, max_bits = MAX_BITS)
+      lengths = Array.new(freqs.size, 0)
+      used = []
+      freqs.each_with_index { |f, sym| used << sym if f.positive? }
+
+      if used.size < 2
+        # A one-symbol code is legal but awkward; pad to two length-1 codes.
+        first = used.first || 0
+        second = first.zero? ? 1 : 0
+        lengths[first] = 1
+        lengths[second] = 1
+        return lengths
+      end
+
+      leaves = used.sort_by { |sym| [freqs[sym], sym] }
+      m = leaves.size
+      weight = leaves.map { |sym| freqs[sym] }
+      parent = Array.new((2 * m) - 1)
+      leaf = 0
+      node = m
+      next_node = m
+      (m - 1).times do
+        pair = Array.new(2) do
+          if leaf < m && (node >= next_node || weight[leaf] <= weight[node])
+            leaf += 1
+            leaf - 1
+          else
+            node += 1
+            node - 1
+          end
+        end
+        weight[next_node] = weight[pair[0]] + weight[pair[1]]
+        parent[pair[0]] = next_node
+        parent[pair[1]] = next_node
+        next_node += 1
+      end
+
+      depth = Array.new((2 * m) - 1, 0)
+      ((2 * m) - 3).downto(0) { |i| depth[i] = depth[parent[i]] + 1 }
+
+      max_depth = depth[0, m].max
+      count = Array.new([max_depth, max_bits].max + 1, 0)
+      m.times { |i| count[depth[i]] += 1 }
+
+      if max_depth > max_bits
+        ((max_bits + 1)..max_depth).each do |len|
+          count[max_bits] += count[len]
+          count[len] = 0
+        end
+        total = (1..max_bits).sum { |len| count[len] << (max_bits - len) }
+        while total != (1 << max_bits)
+          count[max_bits] -= 1
+          (max_bits - 1).downto(1) do |len|
+            next if count[len].zero?
+
+            count[len] -= 1
+            count[len + 1] += 2
+            break
+          end
+          total -= 1
+        end
+      end
+
+      i = 0
+      max_bits.downto(1) do |len|
+        count[len].times do
+          lengths[leaves[i]] = len
+          i += 1
+        end
+      end
+      lengths
     end
 
     # A table-driven decoder. The table is indexed by the next +max_length+
